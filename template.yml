@@ -1,0 +1,68 @@
+parameters:
+    - name: Test
+      type: string
+      default: 'test'
+
+stages:
+  - stage: build
+    jobs:
+      - job: build
+        pool:
+          vmImage: ubuntu-22.04
+        variables:
+          major: 0
+          minor: 0
+          patch: $[counter(variables['minor'], 0)]
+        steps:
+            - bash: |
+                echo "##vso[build.updatebuildnumber]$(major).$(minor).$(patch)"
+              displayName: SetBuildVersion
+            - bash: |
+                echo "##vso[build.addbuildtag]v$(major).$(minor).$(patch)"
+              displayName: AddVersionTag
+            - bash: |
+                echo "##vso[task.setvariable variable=VersionNumber;isOutput=true]$(major).$(minor).$(patch)"
+              name: SetVersionNumber
+
+  - stage: first_${{ parameters.Test }}
+    dependsOn: build
+    condition: succeeded()
+    jobs:
+      - deployment: deploy1
+        displayName: DeployOne
+        environment: no-check
+        pool:
+          vmImage: ubuntu-22.04
+        variables:
+          - name: versionNumber
+            value: $[stageDependencies.build.build.outputs['SetVersionNumber.VersionNumber']]
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - bash: |
+                    ATTEMPT=$(System.JobAttempt)
+                    echo "Version number: $(versionNumber)"
+                    echo "Run counter: $ATTEMPT"
+                    echo "##vso[task.setvariable variable=RunCounter;isOutput=true]$ATTEMPT"
+                  name: SetRunNumber
+
+  - stage: second_${{ parameters.Test }}
+    dependsOn: first_${{ parameters.Test }}
+    condition: succeeded()
+    jobs:
+      - deployment: deploy2
+        displayName: 'Deploy Two'
+        environment: no-check
+        pool:
+          vmImage: ubuntu-22.04
+        variables:
+          - name: run-counter
+            value: $[stageDependencies['first_${{ parameters.Test }}'].deploy1.outputs['deploy1.SetRunNumber.RunCounter']]
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - bash: |
+                    echo "Run counter2: $(run-counter)"
+                  name: EchoRunCounter
